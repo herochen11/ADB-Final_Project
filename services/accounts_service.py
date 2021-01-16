@@ -1,7 +1,7 @@
 from data.db_session import db_auth
 from typing import Optional
 from passlib.handlers.sha2_crypt import sha512_crypt as crypto
-from services.classes import User, Equipments
+from services.classes import *
 
 
 graph = db_auth()
@@ -12,13 +12,21 @@ def find_user(email: str):
     return user
 
 
-def create_user(name: str, email: str, company: str, password: str) -> Optional[User]:
+def create_user(username: str, name: str, email: str, affiliation: str, title: str, country: str, password: str) -> Optional[User]:
     if find_user(email):
         return None
     user = User()
+    max_id = graph.run(f"MATCH (n:user) RETURN ID(n) order by ID(n) DESC  LIMIT 1").data()
+    if len(max_id) == 0:
+        user.UID = '0'
+    else:
+        user.UID = str(max_id[0]['ID(n)']+1)
+    user.username = username
     user.name = name
     user.email = email
-    user.company = company
+    user.affiliation = affiliation
+    user.title = title
+    user.country = country
     user.hashed_password = hash_text(password)
     graph.create(user)
     return user
@@ -47,12 +55,14 @@ def login_user(email: str, password: str) -> Optional[User]:
 
 def get_profile(usr: str) -> Optional[User]:
     # user = User.match(graph, f"{usr}").first()
-    user_profile = graph.run(f"MATCH (x:user) WHERE x.email='{usr}' RETURN x.name as name, x.company as company, x.email as email").data()
+    user_profile = graph.run(f"MATCH (x:user) WHERE x.email='{usr}' RETURN x.username as username, x.name as name, x.email as email, x.affiliation as affiliation, x.title as title, x.country as country").data()
     return user_profile
 
-def update_profile(usr: str, name: str, company: str) -> Optional[User]:
+def update_profile(usr: str, username: str, name: str, affiliation: str, title: str, country: str) -> Optional[User]:
     # user = User.match(graph, f"{usr}").first()
-    user_profile = graph.run(f"MATCH (x:user) WHERE x.email='{usr}' SET x.name='{name}', x.company='{company}' RETURN x.name as name, x.company as company, x.email as email").data()
+    query = f"MATCH (x:user) WHERE x.email='{usr}' SET x.username='{username}', x.name='{name}', x.affiliation='{affiliation}', x.title='{title}', x.country='{country}'" \
+    "RETURN x.username as username, x.name as name, x.email as email, x.affiliation as affiliation, x.title as title, x.country as country"
+    user_profile = graph.run(query).data()
     return user_profile
 
 
@@ -61,26 +71,26 @@ def count_user_equipment(usr: str)->int:
     count = graph.run("MATCH (x:user {email:$usr})-[:UhaveE]->(:equipments) return count(*)",usr=usr).evaluate()
     return count
 
-def create_user_equipments(usr: str,eid: str ,Site: str,Longitude:float,Latitude:float,Altitude:float,tz:str,daylight:bool,wv: float,light_pollusion: float):
+def create_user_equipments(usr: str,eid: int ,Site: str,Longitude:float,Latitude:float,Altitude:float,tz:str,daylight:bool,wv: float,light_pollusion: float):
     
 
-    query = f"MATCH (x:user) where x.email='{usr}'  MATCH (e:equipments) where e.EID='{eid}'" \
+    query ="MATCH (x:user {email:$usr})  MATCH (e:equipments {EID:$EID})" \
     "CREATE (x)-[h:UhaveE{ uhaveid: $uhaveid, site:$Site, longitude:$Longitude, latitude:$Latitude" \
     ", altitude:$Altitude, time_zone:$tz, daylight_saving:$daylight, water_vapor:$wv,light_pollusion:$light_pollusion}]->(e) return h.uhaveid as id, h.site as site, h.longitude as longitude," \
     "h.latitude as latitude, h.altitude as altitude, h.time_zone as time_zone, h.daylight_saving as daylight_saving, h.water_vapor as water_vapor, h.light_pollusion as light_pollusion"
 
-    count = graph.run("MATCH (x:user)-[p:UhaveE]->(:equipments) return ID(p) order by ID(p) DESC limit 1").data()
+    count = graph.run("MATCH (x:user)-[p:UhaveE]->(:equipments) return p.uhaveid order by p.uhaveid DESC limit 1").data()
     if len(count) == 0:
-        uhaveid = '0'
+        uhaveid = 0
     else:
-        uhaveid = str(count[0]['ID(p)']+1)
+        uhaveid = count[0]['p.uhaveid']+1
     print(uhaveid)
-    user_equipments = graph.run(query,Site=Site,Longitude=Longitude,Latitude=Latitude,Altitude=Altitude,tz=tz,daylight=daylight,wv=wv,light_pollusion=light_pollusion, uhaveid = uhaveid)
+    user_equipments = graph.run(query,usr=usr, EID = eid, Site=Site,Longitude=Longitude,Latitude=Latitude,Altitude=Altitude,tz=tz,daylight=daylight,wv=wv,light_pollusion=light_pollusion, uhaveid = uhaveid)
     return user_equipments
 
 def update_user_equipments(aperture: float,Fov: float,pixel_scale: float,tracking_accurcy: float,lim_magnitude: float,elevation_lim: float,mount_type: str,camera_type1:str,
                           camera_type2: str,JohnsonB: str,JohnsonR: str,JohnsonV: str,SDSSu: str,SDSSg: str,SDSSr: str,SDSSi: str,SDSSz:str,
-                          usr: str ,Site: str,Longitude:float,Latitude:float,Altitude:float,tz:str,daylight:bool,wv: float,light_pollusion: float, uhaveid : str):
+                          usr: str ,Site: str,Longitude:float,Latitude:float,Altitude:float,tz:str,daylight:bool,wv: float,light_pollusion: float, uhaveid : int):
 
     print(uhaveid) 
     query ="MATCH (x:user {email:$usr})-[h:UhaveE {uhaveid: $uhaveid}]->(e:equipments)" \
@@ -102,21 +112,20 @@ def get_user_equipments(usr: str):
         "e.SDSSg as SDSSg, e.SDSSr as SDSSr, e.SDSSi as SDSSi,e.SDSSz as SDSSz, h.uhaveid as id" ,usr=usr).data()
     return user_equipments
 
-def delete_user_equipment(usr: str,uhaveid: str):
+def delete_user_equipment(usr: str,uhaveid: int):
     #delete user's equipment
     graph.run("MATCH (x:user {email:$usr})-[h:UhaveE {uhaveid: $uhaveid}]->(e:equipments) DELETE h,e", usr=usr, uhaveid=uhaveid)
 
 
 def create_equipments(aperture:float,Fov:float,pixel_scale:float,tracking_accurcy:float,lim_magnitude:float,elevation_lim:float,mount_type:str,camera_type1:str,camera_type2:str,JohsonB:str,JohsonR:str,JohsonV:str,SDSSu:str,SDSSg:str,SDSSr:str,SDSSi:str,SDSSz:str)->Optional[Equipments]:
     # create an equipment
-    count = graph.run("MATCH (e:equipments) return ID(e)  order by ID(e) DESC limit 1 ").data()
+    count = graph.run("MATCH (e:equipments) return e.EID  order by e.EID DESC limit 1 ").data()
 
-    
     equipment = Equipments()
     if len(count) == 0:
-        equipment.EID = '0'
+        equipment.EID = 0
     else:
-        equipment.EID = str(count[0]['ID(e)']+1)
+        equipment.EID = count[0]['e.EID']+1
     equipment.aperture = aperture
     equipment.Fov = Fov
     equipment.pixel_scale =pixel_scale
@@ -147,4 +156,20 @@ def create_equipments(aperture:float,Fov:float,pixel_scale:float,tracking_accurc
                            "e.SDSSz as SDSSz", usr = usr).data()
     print(equipment)
     return equipment  
-'''                      
+'''   
+
+def get_target():
+    # this function will return all target
+    query = "MATCH(t:target) return t.name as name order by t.TID limit 100"
+    # "MATCH(t:target) where t.tid>100 return t.name as name order by t.TID limit 100"
+    target = graph.run(query)
+    return target
+
+def get_project(usr: str):
+    # this function will return project which user can join
+    query = "MATCH(t:project) return t.title as title, t.project_type as project_type, t.PI as PI, t.description as description, t.aperture_upper_limit as aperture_upper_limit, t.aperture_lower_limit as aperture_lower_limit," \
+            "t.FoV_upper_limit as FoV_upper_limit, t.FoV_lower_limit as FoV_lower_limit, t.pixel_scale_upper_limit as pixel_scale_upper_limit, t.pixel_scale_lower_limit as pixel_scale_lower_limit," \
+            "t.mount_type as mount_type, t.camera_type1 as camera_type1, t.camera_type2 as camera_type2, t.JohnsonB as JohnsonB, t.JohnsonR as JohnsonR, t.JohnsonV as JohnsonV, t.SDSSu as SDSSu," \
+            "t.SDSSg as SDSSg, t.SDSSr as SDSSr, t.SDSSi as SDSSi, t.SDSSz as SDSSz, t.PID as PID ORDER BY t.PID limit 100"
+    project = graph.run(query)
+    return project
